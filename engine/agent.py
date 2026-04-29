@@ -1,7 +1,7 @@
 """
 engine/agent.py
-Logika decyzyjna oparta na LLM (OpenAI GPT).
-Agent analizuje dane techniczne + newsy i zwraca decyzję w formacie JSON.
+Decision-making logic based on LLM (OpenAI GPT).
+Agent analyzes technical data + news and returns decision in JSON format.
 """
 import json
 import logging
@@ -13,30 +13,30 @@ import config
 
 logger = logging.getLogger(__name__)
 
-# System prompt wymuszający strukturalną odpowiedź JSON
-SYSTEM_PROMPT = """Jesteś autonomicznym agentem inwestycyjnym analizującym kryptowaluty.
-Twoim zadaniem jest analiza dostarczonych danych technicznych i wiadomości rynkowych,
-a następnie wydanie JEDNEJ decyzji handlowej.
+# System prompt enforcing structured JSON response
+SYSTEM_PROMPT = """You are an autonomous investment agent analyzing cryptocurrency markets.
+Your task is to analyze the provided technical data and market news,
+then issue ONE trading decision.
 
-ZASADY:
-1. Bądź ostrożny — preferuj HOLD gdy sygnały są mieszane.
-2. Nigdy nie sugeruj wartości transakcji powyżej {max_order_usd} USD.
-3. Twoja odpowiedź MUSI być wyłącznie poprawnym obiektem JSON (bez markdown, bez komentarzy).
-4. Confidence to Twoja pewność decyzji w skali 0.0–1.0.
-5. Jeśli confidence < {threshold}, decyzja powinna być HOLD.
+RULES:
+1. Be cautious — prefer HOLD when signals are mixed.
+2. Never suggest transaction values above {max_order_usd} USD.
+3. Your response MUST be valid JSON only (no markdown, no comments).
+4. Confidence is your decision certainty on a scale of 0.0–1.0.
+5. If confidence < {threshold}, decision should be HOLD.
 
-FORMAT ODPOWIEDZI (dokładnie te klucze):
+RESPONSE FORMAT (exactly these keys):
 {{
   "action": "BUY" | "SELL" | "HOLD",
   "confidence": 0.0-1.0,
   "value_usd": 0.0,
-  "reasoning": "Krótkie uzasadnienie decyzji (2-3 zdania)",
+  "reasoning": "Brief decision rationale (2-3 sentences)",
   "risk_assessment": "LOW" | "MEDIUM" | "HIGH",
   "key_signals": ["signal1", "signal2"]
 }}
 
-Jeśli action=HOLD, ustaw value_usd na 0.
-Jeśli action=BUY lub SELL, podaj sugerowaną wartość w USD (max {max_order_usd}).
+If action=HOLD, set value_usd to 0.
+If action=BUY or SELL, provide suggested value in USD (max {max_order_usd}).
 """.format(
     max_order_usd=config.MAX_ORDER_VALUE_USD,
     threshold=config.SENTIMENT_THRESHOLD,
@@ -44,7 +44,7 @@ Jeśli action=BUY lub SELL, podaj sugerowaną wartość w USD (max {max_order_us
 
 
 class TradingAgent:
-    """Agent decyzyjny oparty na OpenAI GPT."""
+    """Decision-making agent based on OpenAI GPT."""
 
     def __init__(self):
         self.client = OpenAI(api_key=config.OPENAI_API_KEY)
@@ -59,17 +59,17 @@ class TradingAgent:
         open_positions: list[dict],
     ) -> dict:
         """
-        Wysyła kontekst do LLM i zwraca sparsowaną decyzję.
+        Sends context to LLM and returns parsed decision.
 
         Returns:
-            dict z kluczami: action, confidence, value_usd, reasoning,
-                              risk_assessment, key_signals
+            dict with keys: action, confidence, value_usd, reasoning,
+                            risk_assessment, key_signals
         """
         user_prompt = self._build_user_prompt(
             market_summary, news_summary, portfolio_state, open_positions
         )
 
-        logger.info("Wysyłam zapytanie do LLM (%s)...", self.model)
+        logger.info("Sending query to LLM (%s)...", self.model)
         logger.debug("User prompt:\n%s", user_prompt)
 
         try:
@@ -88,13 +88,13 @@ class TradingAgent:
 
             decision = self._parse_decision(raw)
             logger.info(
-                "Decyzja LLM: %s (confidence=%.2f, value=%.2f USD)",
+                "LLM Decision: %s (confidence=%.2f, value=%.2f USD)",
                 decision["action"], decision["confidence"], decision["value_usd"],
             )
             return decision
 
         except Exception as e:
-            logger.error("Błąd komunikacji z LLM: %s", e)
+            logger.error("LLM communication error: %s", e)
             return self._fallback_decision(str(e))
 
     def _build_user_prompt(
@@ -104,63 +104,63 @@ class TradingAgent:
         portfolio_state: dict,
         open_positions: list[dict],
     ) -> str:
-        """Buduje prompt użytkownika z całym kontekstem."""
-        positions_text = "Brak otwartych pozycji." if not open_positions else json.dumps(
+        """Builds user prompt with complete context."""
+        positions_text = "No open positions." if not open_positions else json.dumps(
             open_positions, indent=2, default=str
         )
 
-        prompt = f"""Przeanalizuj poniższe dane i podejmij decyzję inwestycyjną.
+        prompt = f"""Analyze the data below and make an investment decision.
 
 {market_summary}
 
 {news_summary}
 
-=== STAN PORTFELA ===
-Dostępne USDT: {portfolio_state.get('free_usdt', 0):.2f}
-Zainwestowane USDT: {portfolio_state.get('used_usdt', 0):.2f}
-Łącznie USDT: {portfolio_state.get('total_usdt', 0):.2f}
+=== PORTFOLIO STATUS ===
+Available USDT: {portfolio_state.get('free_usdt', 0):.2f}
+Invested USDT: {portfolio_state.get('used_usdt', 0):.2f}
+Total USDT: {portfolio_state.get('total_usdt', 0):.2f}
 
-=== OTWARTE POZYCJE ===
+=== OPEN POSITIONS ===
 {positions_text}
 
-=== LIMITY BEZPIECZEŃSTWA ===
-- Max wartość zlecenia: {config.MAX_ORDER_VALUE_USD} USD
-- Max dzienne straty: {config.MAX_DAILY_LOSS_USD} USD
+=== SAFETY LIMITS ===
+- Max order value: {config.MAX_ORDER_VALUE_USD} USD
+- Max daily loss: {config.MAX_DAILY_LOSS_USD} USD
 - Stop-Loss: {config.STOP_LOSS_PCT}%
 - Take-Profit: {config.TAKE_PROFIT_PCT}%
 
-Podaj swoją decyzję jako JSON.
+Provide your decision as JSON.
 """
         return prompt
 
     def _parse_decision(self, raw_json: str) -> dict:
-        """Parsuje i waliduje odpowiedź LLM."""
+        """Parses and validates LLM response."""
         try:
             data = json.loads(raw_json)
         except json.JSONDecodeError as e:
-            logger.error("Nie udało się sparsować JSON z LLM: %s", e)
+            logger.error("Failed to parse JSON from LLM: %s", e)
             return self._fallback_decision(f"JSON parse error: {e}")
 
-        # Walidacja wymaganych kluczy
+        # Validate required keys
         required_keys = {"action", "confidence", "value_usd", "reasoning"}
         missing = required_keys - set(data.keys())
         if missing:
-            logger.warning("Brakujące klucze w odpowiedzi LLM: %s", missing)
+            logger.warning("Missing keys in LLM response: %s", missing)
             return self._fallback_decision(f"Missing keys: {missing}")
 
-        # Normalizacja
+        # Normalization
         action = data["action"].upper().strip()
         if action not in ("BUY", "SELL", "HOLD"):
-            logger.warning("Nieznana akcja LLM: %s → HOLD", action)
+            logger.warning("Unknown LLM action: %s → HOLD", action)
             action = "HOLD"
 
         confidence = max(0.0, min(1.0, float(data["confidence"])))
         value_usd = max(0.0, min(config.MAX_ORDER_VALUE_USD, float(data["value_usd"])))
 
-        # Wymuszone HOLD jeśli pewność zbyt niska
+        # Force HOLD if confidence too low
         if confidence < config.SENTIMENT_THRESHOLD and action != "HOLD":
             logger.info(
-                "Confidence (%.2f) < threshold (%.2f) → wymuszam HOLD",
+                "Confidence (%.2f) < threshold (%.2f) → forcing HOLD",
                 confidence, config.SENTIMENT_THRESHOLD,
             )
             action = "HOLD"
@@ -177,12 +177,12 @@ Podaj swoją decyzję jako JSON.
 
     @staticmethod
     def _fallback_decision(error_msg: str) -> dict:
-        """Bezpieczna decyzja awaryjna — zawsze HOLD."""
+        """Safe emergency decision — always HOLD."""
         return {
             "action": "HOLD",
             "confidence": 0.0,
             "value_usd": 0.0,
-            "reasoning": f"Decyzja awaryjna (fallback) z powodu błędu: {error_msg}",
+            "reasoning": f"Emergency fallback decision due to error: {error_msg}",
             "risk_assessment": "HIGH",
             "key_signals": ["error_fallback"],
         }

@@ -1,7 +1,7 @@
 """
 main.py
-Główna pętla autonomicznego agenta inwestycyjnego.
-Uruchamianie: python main.py
+Main loop of the autonomous investment agent.
+Run: python main.py
 """
 import json
 import logging
@@ -39,13 +39,13 @@ logger = logging.getLogger("main")
 
 
 # ---------------------------------------------------------------------------
-# WYKONYWANIE TRANSAKCJI
+# TRADE EXECUTION
 # ---------------------------------------------------------------------------
 
 def execute_trade(decision: dict, circuit: CircuitBreaker) -> dict:
     """
-    Wykonuje transakcję na podstawie decyzji agenta.
-    W trybie paper-trading symuluje transakcję lokalnie.
+    Executes a trade based on agent's decision.
+    In paper-trading mode, simulates the trade locally.
     """
     action = decision["action"]
     value_usd = decision["value_usd"]
@@ -67,10 +67,10 @@ def execute_trade(decision: dict, circuit: CircuitBreaker) -> dict:
         circuit.record_trade(trade_record)
         return trade_record
 
-    # Sprawdź guardrails
+    # Check guardrails
     allowed, reason = circuit.can_trade(value_usd)
     if not allowed:
-        logger.warning("Transakcja zablokowana: %s", reason)
+        logger.warning("Trade blocked: %s", reason)
         return {
             "action": "BLOCKED",
             "reason": reason,
@@ -85,25 +85,25 @@ def execute_trade(decision: dict, circuit: CircuitBreaker) -> dict:
 
 
 def _execute_paper_trade(decision: dict, circuit: CircuitBreaker) -> dict:
-    """Symuluje transakcję w trybie paper-trading."""
+    """Simulates a trade in paper-trading mode."""
     action = decision["action"]
     value_usd = decision["value_usd"]
     pair = config.TRADING_PAIR
 
-    # Pobierz aktualną cenę
+    # Fetch current price
     try:
         df = fetch_ohlcv(limit=1)
         current_price = float(df.iloc[-1]["close"])
     except Exception:
-        logger.error("Nie można pobrać ceny — transakcja anulowana")
-        return {"action": "ERROR", "reason": "Nie można pobrać ceny"}
+        logger.error("Cannot fetch price — trade cancelled")
+        return {"action": "ERROR", "reason": "Cannot fetch price"}
 
     amount = value_usd / current_price
     balance = fetch_balance()
 
     if action == "BUY":
         if balance["free_usdt"] < value_usd:
-            return {"action": "BLOCKED", "reason": "Brak wystarczających środków"}
+            return {"action": "BLOCKED", "reason": "Insufficient funds"}
         balance["free_usdt"] -= value_usd
         balance["used_usdt"] += value_usd
         balance.setdefault("positions", []).append({
@@ -116,11 +116,11 @@ def _execute_paper_trade(decision: dict, circuit: CircuitBreaker) -> dict:
         pnl = 0.0
 
     elif action == "SELL":
-        # Znajdź otwartą pozycję
+        # Find open position
         positions = balance.get("positions", [])
         matching = [p for p in positions if p.get("pair") == pair]
         if not matching:
-            return {"action": "BLOCKED", "reason": "Brak otwartej pozycji do zamknięcia"}
+            return {"action": "BLOCKED", "reason": "No open position to close"}
         pos = matching[0]
         pnl = (current_price - pos["entry_price"]) * pos["amount"]
         balance["free_usdt"] += pos["amount"] * current_price
@@ -129,7 +129,7 @@ def _execute_paper_trade(decision: dict, circuit: CircuitBreaker) -> dict:
         positions.remove(pos)
         balance["positions"] = positions
     else:
-        return {"action": "ERROR", "reason": f"Nieznana akcja: {action}"}
+        return {"action": "ERROR", "reason": f"Unknown action: {action}"}
 
     balance["total_usdt"] = balance["free_usdt"] + balance["used_usdt"]
     _save_paper_state(balance)
@@ -153,7 +153,7 @@ def _execute_paper_trade(decision: dict, circuit: CircuitBreaker) -> dict:
 
 
 def _execute_real_trade(decision: dict, circuit: CircuitBreaker) -> dict:
-    """Wykonuje rzeczywistą transakcję przez API Binance."""
+    """Executes a real trade through Binance API."""
     action = decision["action"]
     value_usd = decision["value_usd"]
     pair = config.TRADING_PAIR
@@ -162,7 +162,7 @@ def _execute_real_trade(decision: dict, circuit: CircuitBreaker) -> dict:
     symbol = pair.replace("/", "")
 
     try:
-        # Pobierz aktualną cenę
+        # Fetch current price
         ticker = exchange.fetch_ticker(pair)
         current_price = ticker["last"]
         amount = value_usd / current_price
@@ -172,7 +172,7 @@ def _execute_real_trade(decision: dict, circuit: CircuitBreaker) -> dict:
         elif action == "SELL":
             order = exchange.create_market_sell_order(pair, amount)
         else:
-            return {"action": "ERROR", "reason": f"Nieznana akcja: {action}"}
+            return {"action": "ERROR", "reason": f"Unknown action: {action}"}
 
         trade_record = {
             "action": action,
@@ -193,18 +193,18 @@ def _execute_real_trade(decision: dict, circuit: CircuitBreaker) -> dict:
         return trade_record
 
     except Exception as e:
-        logger.error("Błąd wykonania zlecenia: %s", e)
+        logger.error("Order execution error: %s", e)
         return {"action": "ERROR", "reason": str(e)}
 
 
 # ---------------------------------------------------------------------------
-# SPRAWDZANIE STOP-LOSS / TAKE-PROFIT
+# STOP-LOSS / TAKE-PROFIT CHECK
 # ---------------------------------------------------------------------------
 
 def check_stop_loss_take_profit(circuit: CircuitBreaker) -> list[dict]:
     """
-    Sprawdza otwarte pozycje pod kątem stop-loss i take-profit.
-    Zwraca listę automatycznie wygenerowanych decyzji SELL.
+    Checks open positions for stop-loss and take-profit.
+    Returns list of automatically generated SELL decisions.
     """
     open_positions = circuit.get_open_positions()
     if not open_positions:
@@ -214,7 +214,7 @@ def check_stop_loss_take_profit(circuit: CircuitBreaker) -> list[dict]:
         df = fetch_ohlcv(limit=1)
         current_price = float(df.iloc[-1]["close"])
     except Exception:
-        logger.warning("Nie można sprawdzić SL/TP — brak danych cenowych")
+        logger.warning("Cannot check SL/TP — no price data available")
         return []
 
     auto_sells = []
@@ -226,117 +226,117 @@ def check_stop_loss_take_profit(circuit: CircuitBreaker) -> list[dict]:
         change_pct = ((current_price - entry) / entry) * 100
 
         if change_pct <= -config.STOP_LOSS_PCT:
-            logger.warning("⛔ STOP-LOSS aktywowany! Zmiana: %.2f%% (limit: -%.1f%%)",
+            logger.warning("⛔ STOP-LOSS triggered! Change: %.2f%% (limit: -%.1f%%)",
                            change_pct, config.STOP_LOSS_PCT)
             auto_sells.append({
                 "action": "SELL",
                 "confidence": 1.0,
                 "value_usd": pos.get("value_usd", config.MAX_ORDER_VALUE_USD),
-                "reasoning": f"Automatyczny STOP-LOSS: cena spadła o {change_pct:.2f}%",
+                "reasoning": f"Automatic STOP-LOSS: price dropped by {change_pct:.2f}%",
             })
 
         elif change_pct >= config.TAKE_PROFIT_PCT:
-            logger.info("✅ TAKE-PROFIT aktywowany! Zmiana: +%.2f%% (limit: +%.1f%%)",
+            logger.info("✅ TAKE-PROFIT triggered! Change: +%.2f%% (limit: +%.1f%%)",
                         change_pct, config.TAKE_PROFIT_PCT)
             auto_sells.append({
                 "action": "SELL",
                 "confidence": 1.0,
                 "value_usd": pos.get("value_usd", config.MAX_ORDER_VALUE_USD),
-                "reasoning": f"Automatyczny TAKE-PROFIT: cena wzrosła o {change_pct:.2f}%",
+                "reasoning": f"Automatic TAKE-PROFIT: price rose by {change_pct:.2f}%",
             })
 
     return auto_sells
 
 
 # ---------------------------------------------------------------------------
-# GŁÓWNA PĘTLA
+# MAIN LOOP
 # ---------------------------------------------------------------------------
 
 def run_cycle(agent: TradingAgent, circuit: CircuitBreaker) -> dict:
-    """Pojedynczy cykl analizy i (opcjonalnego) handlu."""
+    """Single analysis cycle with optional trading."""
     logger.info("=" * 60)
-    logger.info("NOWY CYKL ANALIZY — %s", datetime.now(timezone.utc).isoformat())
+    logger.info("NEW ANALYSIS CYCLE — %s", datetime.now(timezone.utc).isoformat())
     logger.info("=" * 60)
 
-    # 0) Sprawdź SL/TP na otwartych pozycjach
+    # 0) Check SL/TP on open positions
     auto_decisions = check_stop_loss_take_profit(circuit)
     for auto_dec in auto_decisions:
         execute_trade(auto_dec, circuit)
 
-    # 1) Pobierz dane rynkowe
-    logger.info("Pobieram dane rynkowe...")
+    # 1) Fetch market data
+    logger.info("Fetching market data...")
     try:
         df = fetch_ohlcv()
         df = calculate_indicators(df)
         market_summary = summarize_market(df)
     except Exception as e:
-        logger.error("Nie udało się pobrać danych rynkowych: %s", e)
+        logger.error("Failed to fetch market data: %s", e)
         return {"action": "ERROR", "reason": str(e)}
 
-    # 2) Pobierz wiadomości
-    logger.info("Pobieram wiadomości...")
+    # 2) Fetch news
+    logger.info("Fetching news...")
     news = fetch_news()
     news_summary = format_news_for_llm(news)
 
-    # 3) Stan portfela
+    # 3) Portfolio state
     portfolio = fetch_balance()
     open_positions = circuit.get_open_positions()
 
-    # 4) Analiza LLM
-    logger.info("Analizuję dane z LLM...")
+    # 4) LLM analysis
+    logger.info("Analyzing with LLM...")
     decision = agent.analyze(market_summary, news_summary, portfolio, open_positions)
 
-    # 5) Wykonaj transakcję (guardrails sprawdzane wewnątrz)
+    # 5) Execute trade (guardrails checked inside)
     result = execute_trade(decision, circuit)
 
-    # 6) Podsumowanie
+    # 6) Summary
     daily_pnl = circuit.get_daily_pnl()
-    logger.info("Dzienny PnL: %.2f USD | Decyzja: %s | Confidence: %.2f",
+    logger.info("Daily PnL: %.2f USD | Decision: %s | Confidence: %.2f",
                 daily_pnl, decision["action"], decision["confidence"])
 
     return result
 
 
 def main():
-    """Punkt wejścia — uruchamia pętlę agenta."""
-    logger.info("🚀 Uruchamiam Autonomous AI Investment Agent")
-    logger.info("Para: %s | Interwał: %s | Paper: %s",
+    """Entry point — runs agent loop."""
+    logger.info("🚀 Starting Autonomous AI Investment Agent")
+    logger.info("Pair: %s | Interval: %s | Paper: %s",
                 config.TRADING_PAIR, config.TIMEFRAME, config.IS_PAPER_TRADING)
 
-    # Walidacja konfiguracji
+    # Validate configuration
     try:
         config.validate_config()
     except EnvironmentError as e:
-        logger.error("Błąd konfiguracji: %s", e)
+        logger.error("Configuration error: %s", e)
         sys.exit(1)
 
     agent = TradingAgent()
     circuit = CircuitBreaker()
 
-    logger.info("Agent gotowy. Rozpoczynam pętlę (interwał: %ds)...",
+    logger.info("Agent ready. Starting loop (interval: %ds)...",
                 config.LOOP_INTERVAL_SECONDS)
 
     cycle_count = 0
     while True:
         cycle_count += 1
         try:
-            logger.info("--- Cykl #%d ---", cycle_count)
+            logger.info("--- Cycle #%d ---", cycle_count)
             result = run_cycle(agent, circuit)
-            logger.info("Wynik cyklu: %s", json.dumps(result, default=str, ensure_ascii=False))
+            logger.info("Cycle result: %s", json.dumps(result, default=str, ensure_ascii=False))
         except KeyboardInterrupt:
-            logger.info("Zatrzymano przez użytkownika (Ctrl+C)")
+            logger.info("Stopped by user (Ctrl+C)")
             break
         except Exception as e:
-            logger.error("Nieoczekiwany błąd w cyklu #%d: %s", cycle_count, e, exc_info=True)
+            logger.error("Unexpected error in cycle #%d: %s", cycle_count, e, exc_info=True)
 
-        logger.info("Następny cykl za %d sekund...", config.LOOP_INTERVAL_SECONDS)
+        logger.info("Next cycle in %d seconds...", config.LOOP_INTERVAL_SECONDS)
         try:
             time.sleep(config.LOOP_INTERVAL_SECONDS)
         except KeyboardInterrupt:
-            logger.info("Zatrzymano przez użytkownika (Ctrl+C)")
+            logger.info("Stopped by user (Ctrl+C)")
             break
 
-    logger.info("Agent zakończył pracę.")
+    logger.info("Agent finished.")
 
 
 if __name__ == "__main__":

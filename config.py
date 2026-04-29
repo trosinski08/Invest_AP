@@ -3,66 +3,66 @@ import logging
 from pathlib import Path
 from dotenv import load_dotenv
 
-# Załaduj zmienne środowiskowe z pliku .env (API Keys)
+# Load environment variables from .env file (API Keys)
 load_dotenv()
 
-# --- ŚCIEŻKI PROJEKTU ---
+# --- PROJECT PATHS ---
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 DATA_DIR.mkdir(exist_ok=True)
 LOG_FILE = DATA_DIR / "trades.log"
 
-# --- 1. POŁĄCZENIA API ---
-# Pamiętaj: Klucze trzymaj w pliku .env, nigdy bezpośrednio w kodzie!
+# --- 1. API CONNECTIONS ---
+# Remember: Keep API keys in .env file, never hardcode them directly!
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 BINANCE_API_KEY = os.getenv("BINANCE_API_KEY")
 BINANCE_SECRET_KEY = os.getenv("BINANCE_SECRET_KEY")
 
-# --- 2. PARAMETRY MODELU LLM ---
-LLM_MODEL = "gpt-4o-mini"       # Model do analizy (gpt-4o, gpt-4o-mini)
-LLM_TEMPERATURE = 0.2           # Niska temperatura = bardziej deterministyczne decyzje
+# --- 2. LLM MODEL PARAMETERS ---
+LLM_MODEL = "gpt-4o-mini"       # Model for analysis (gpt-4o, gpt-4o-mini)
+LLM_TEMPERATURE = 0.2           # Low temperature = more deterministic decisions
 
-# --- 3. PARAMETRY RYNKOWE ---
-# Ticker, na którym bot będzie operował (np. BTC/USDT)
+# --- 3. MARKET PARAMETERS ---
+# Ticker on which the bot will operate (e.g., BTC/USDT)
 TRADING_PAIR = "BTC/USDT"
-TIMEFRAME = "1h"                 # Interwał analizy (1m, 5m, 1h, 1d)
-CANDLE_LIMIT = 100               # Ile świec historycznych pobierać do analizy
+TIMEFRAME = "1h"                 # Analysis interval (1m, 5m, 1h, 1d)
+CANDLE_LIMIT = 100               # Number of historical candles to fetch for analysis
 
-# --- 4. SZTYWNE LIMITY BEZPIECZEŃSTWA (GUARDRAILS) ---
-# To są parametry, których AI NIE MOŻE zmienić.
-MAX_ORDER_VALUE_USD = 20.0       # Maksymalna kwota jednego zlecenia w USD
-MAX_DAILY_LOSS_USD = 40.0        # Bot wyłącza się po stracie X USD w ciągu dnia
-MAX_OPEN_POSITIONS = 1           # Ile transakcji może być otwartych naraz
-MAX_TRADES_PER_24H = 5           # Limit transakcji/24h, aby nie spalił prowizji
-COOLDOWN_MINUTES = 60            # Minimalny odstęp między transakcjami (minuty)
-STOP_LOSS_PCT = 3.0              # Automatyczny stop-loss (%) na pozycji
-TAKE_PROFIT_PCT = 5.0            # Automatyczny take-profit (%) na pozycji
+# --- 4. HARD SAFETY LIMITS (GUARDRAILS) ---
+# These are parameters that AI CANNOT change.
+MAX_ORDER_VALUE_USD = 20.0       # Maximum order value in USD
+MAX_DAILY_LOSS_USD = 40.0        # Bot shuts down after X USD loss per day
+MAX_OPEN_POSITIONS = 1           # How many transactions can be open at once
+MAX_TRADES_PER_24H = 5           # Transaction limit/24h to avoid burning fees
+COOLDOWN_MINUTES = 60            # Minimum interval between transactions (minutes)
+STOP_LOSS_PCT = 3.0              # Automatic stop-loss (%) on position
+TAKE_PROFIT_PCT = 5.0            # Automatic take-profit (%) on position
 
-# --- 5. LOGIKA ANALIZY ---
-NEWS_COUNT = 5                   # Ile najnowszych newsów wysyłać do LLM
-SENTIMENT_THRESHOLD = 0.7        # Minimalna pewność AI (podniesiona dla bezpieczeństwa)
+# --- 5. ANALYSIS LOGIC ---
+NEWS_COUNT = 5                   # Number of latest news items to send to LLM
+SENTIMENT_THRESHOLD = 0.7        # Minimum AI confidence (raised for safety)
 
-# --- 6. TRYB PRACY ---
-IS_PAPER_TRADING = True          # Zmień na False TYLKO gdy będziesz gotowy na Real Money
-LOOP_INTERVAL_SECONDS = 3600     # Co ile sekund agent uruchamia analizę (domyślnie 1h)
+# --- 6. OPERATION MODE ---
+IS_PAPER_TRADING = True          # Change to False ONLY when ready for Real Money
+LOOP_INTERVAL_SECONDS = 3600     # How often agent runs analysis (default 1h)
 
 # --- 7. LOGGING ---
 LOG_LEVEL = logging.INFO
 
-# --- WALIDACJA ---
+# --- VALIDATION ---
 def validate_config():
-    """Sprawdź czy krytyczne zmienne środowiskowe są ustawione."""
+    """Check if critical environment variables are set."""
     missing = []
     if not OPENAI_API_KEY:
         missing.append("OPENAI_API_KEY")
     if not IS_PAPER_TRADING:
-        # W trybie real-money wymagane są klucze Binance
+        # In real-money mode, Binance keys are required
         if not BINANCE_API_KEY:
             missing.append("BINANCE_API_KEY")
         if not BINANCE_SECRET_KEY:
             missing.append("BINANCE_SECRET_KEY")
     if missing:
         raise EnvironmentError(
-            f"Brakujące zmienne środowiskowe: {', '.join(missing)}. "
-            f"Uzupełnij plik .env."
+            f"Missing environment variables: {', '.join(missing)}. "
+            f"Complete the .env file."
         )

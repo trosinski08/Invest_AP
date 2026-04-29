@@ -1,7 +1,7 @@
 """
 engine/guardrails.py
-Moduł bezpieczeństwa (Circuit Breaker).
-Niezależny od LLM — sztywne limity, których AI nie może obejść.
+Safety module (Circuit Breaker).
+Independent of LLM — hard limits that AI cannot bypass.
 """
 import json
 import logging
@@ -16,8 +16,8 @@ logger = logging.getLogger(__name__)
 
 class CircuitBreaker:
     """
-    Sprawdza twarde warunki bezpieczeństwa PRZED wykonaniem transakcji.
-    Każde naruszenie blokuje handel i loguje powód.
+    Checks hard safety conditions BEFORE executing trades.
+    Any violation blocks trading and logs the reason.
     """
 
     def __init__(self, log_file: Optional[Path] = None):
@@ -30,8 +30,8 @@ class CircuitBreaker:
 
     def can_trade(self, order_value_usd: float) -> tuple[bool, str]:
         """
-        Główna metoda walidacji. Zwraca (True, "") jeśli handel dozwolony,
-        lub (False, powód) jeśli zablokowany.
+        Main validation method. Returns (True, "") if trading allowed,
+        or (False, reason) if blocked.
         """
         checks = [
             self._check_paper_mode,
@@ -44,25 +44,25 @@ class CircuitBreaker:
         for check in checks:
             allowed, reason = check()
             if not allowed:
-                logger.warning("CIRCUIT BREAKER — blokada: %s", reason)
+                logger.warning("CIRCUIT BREAKER — blocked: %s", reason)
                 return False, reason
 
-        logger.info("CIRCUIT BREAKER — handel dozwolony (order=%.2f USD)", order_value_usd)
+        logger.info("CIRCUIT BREAKER — trading allowed (order=%.2f USD)", order_value_usd)
         return True, ""
 
     def record_trade(self, trade: dict) -> None:
         """
-        Zapisuje transakcję do logu.
-        trade powinien zawierać: action, pair, price, amount, value_usd, timestamp, reasoning
+        Records transaction to log.
+        trade should contain: action, pair, price, amount, value_usd, timestamp, reasoning
         """
         trade.setdefault("timestamp", datetime.now(timezone.utc).isoformat())
         with open(self.log_file, "a", encoding="utf-8") as f:
             f.write(json.dumps(trade, ensure_ascii=False) + "\n")
-        logger.info("Zapisano transakcję: %s %s @ %.2f USD",
+        logger.info("Recorded trade: %s %s @ %.2f USD",
                      trade.get("action"), trade.get("pair"), trade.get("value_usd", 0))
 
     def get_trade_history(self, hours: int = 24) -> list[dict]:
-        """Zwraca transakcje z ostatnich N godzin."""
+        """Returns trades from last N hours."""
         cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
         trades = self._load_trades()
         recent = []
@@ -77,7 +77,7 @@ class CircuitBreaker:
         return recent
 
     def get_daily_pnl(self) -> float:
-        """Oblicza P&L z dzisiejszych zamkniętych transakcji (w USD)."""
+        """Calculates P&L from today's closed trades (in USD)."""
         trades = self.get_trade_history(hours=24)
         pnl = 0.0
         for t in trades:
@@ -85,7 +85,7 @@ class CircuitBreaker:
         return pnl
 
     def get_open_positions(self) -> list[dict]:
-        """Zwraca aktualnie otwarte pozycje z logu."""
+        """Returns currently open positions from log."""
         trades = self._load_trades()
         positions = {}
         for t in trades:
@@ -98,64 +98,64 @@ class CircuitBreaker:
         return list(positions.values())
 
     def get_all_trades(self) -> list[dict]:
-        """Zwraca całą historię transakcji."""
+        """Returns entire trade history."""
         return self._load_trades()
 
     # ------------------------------------------------------------------
-    # PRYWATNE METODY SPRAWDZAJĄCE
+    # PRIVATE CHECK METHODS
     # ------------------------------------------------------------------
 
     def _check_paper_mode(self) -> tuple[bool, str]:
-        """Informacyjnie loguje tryb pracy."""
+        """Informally logs operation mode."""
         if config.IS_PAPER_TRADING:
-            logger.debug("Tryb: PAPER TRADING")
+            logger.debug("Mode: PAPER TRADING")
         return True, ""
 
     def _check_order_size(self, value_usd: float) -> tuple[bool, str]:
-        """Sprawdza czy zlecenie nie przekracza maksymalnej wartości."""
+        """Checks if order does not exceed maximum value."""
         if value_usd > config.MAX_ORDER_VALUE_USD:
             return False, (
-                f"Wartość zlecenia ({value_usd:.2f} USD) przekracza limit "
+                f"Order value ({value_usd:.2f} USD) exceeds limit "
                 f"({config.MAX_ORDER_VALUE_USD:.2f} USD)"
             )
         if value_usd <= 0:
-            return False, "Wartość zlecenia musi być > 0"
+            return False, "Order value must be > 0"
         return True, ""
 
     def _check_daily_loss(self) -> tuple[bool, str]:
-        """Sprawdza czy dzienna strata nie przekroczyła limitu."""
+        """Checks if daily loss did not exceed limit."""
         daily_pnl = self.get_daily_pnl()
         if daily_pnl < 0 and abs(daily_pnl) >= config.MAX_DAILY_LOSS_USD:
             return False, (
-                f"Dzienna strata ({abs(daily_pnl):.2f} USD) osiągnęła limit "
-                f"({config.MAX_DAILY_LOSS_USD:.2f} USD). Bot wstrzymany do jutra."
+                f"Daily loss ({abs(daily_pnl):.2f} USD) reached limit "
+                f"({config.MAX_DAILY_LOSS_USD:.2f} USD). Bot paused until tomorrow."
             )
         return True, ""
 
     def _check_trade_count(self) -> tuple[bool, str]:
-        """Sprawdza liczbę transakcji w ostatnich 24h."""
+        """Checks number of trades in last 24h."""
         recent = self.get_trade_history(hours=24)
-        # Liczymy tylko zlecenia (BUY/SELL), nie wpisy informacyjne
+        # Count only orders (BUY/SELL), not info entries
         executed = [t for t in recent if t.get("action", "").upper() in ("BUY", "SELL")]
         if len(executed) >= config.MAX_TRADES_PER_24H:
             return False, (
-                f"Osiągnięto limit {config.MAX_TRADES_PER_24H} transakcji/24h "
-                f"(wykonano: {len(executed)})"
+                f"Reached limit of {config.MAX_TRADES_PER_24H} trades/24h "
+                f"(executed: {len(executed)})"
             )
         return True, ""
 
     def _check_open_positions(self) -> tuple[bool, str]:
-        """Sprawdza liczbę otwartych pozycji."""
+        """Checks number of open positions."""
         open_pos = self.get_open_positions()
         if len(open_pos) >= config.MAX_OPEN_POSITIONS:
             return False, (
-                f"Osiągnięto limit {config.MAX_OPEN_POSITIONS} otwartych pozycji "
-                f"(aktualnie: {len(open_pos)})"
+                f"Reached limit of {config.MAX_OPEN_POSITIONS} open positions "
+                f"(currently: {len(open_pos)})"
             )
         return True, ""
 
     def _check_cooldown(self) -> tuple[bool, str]:
-        """Sprawdza minimalny odstęp między transakcjami."""
+        """Checks minimum interval between trades."""
         recent = self.get_trade_history(hours=24)
         executed = [t for t in recent if t.get("action", "").upper() in ("BUY", "SELL")]
         if not executed:
@@ -169,8 +169,8 @@ class CircuitBreaker:
             if now < cooldown_end:
                 remaining = (cooldown_end - now).total_seconds() / 60
                 return False, (
-                    f"Cooldown aktywny — następna transakcja możliwa za "
-                    f"{remaining:.0f} min (interwał: {config.COOLDOWN_MINUTES} min)"
+                    f"Cooldown active — next trade possible in "
+                    f"{remaining:.0f} min (interval: {config.COOLDOWN_MINUTES} min)"
                 )
         except (ValueError, KeyError):
             pass
@@ -181,13 +181,13 @@ class CircuitBreaker:
     # ------------------------------------------------------------------
 
     def _ensure_log_file(self) -> None:
-        """Tworzy plik logów jeśli nie istnieje."""
+        """Creates log file if it doesn't exist."""
         self.log_file.parent.mkdir(parents=True, exist_ok=True)
         if not self.log_file.exists():
             self.log_file.touch()
 
     def _load_trades(self) -> list[dict]:
-        """Wczytuje wszystkie transakcje z pliku JSONL."""
+        """Loads all trades from JSONL file."""
         trades = []
         if not self.log_file.exists():
             return trades
@@ -198,5 +198,5 @@ class CircuitBreaker:
                     try:
                         trades.append(json.loads(line))
                     except json.JSONDecodeError:
-                        logger.warning("Pominięto uszkodzony wpis w logu: %s", line[:80])
+                        logger.warning("Skipped corrupted log entry: %s", line[:80])
         return trades

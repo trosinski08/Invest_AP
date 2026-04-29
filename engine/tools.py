@@ -1,6 +1,6 @@
 """
 engine/tools.py
-Narzędzia do pobierania danych rynkowych (OHLCV) i wiadomości.
+Tools for fetching market data (OHLCV) and news.
 """
 import logging
 from datetime import datetime
@@ -17,11 +17,11 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# 1. DANE RYNKOWE (Market Data)
+# 1. MARKET DATA (Market Data)
 # ---------------------------------------------------------------------------
 
 def get_exchange(sandbox: bool = True) -> ccxt.binance:
-    """Zwraca skonfigurowaną instancję giełdy Binance."""
+    """Returns configured Binance exchange instance."""
     exchange = ccxt.binance({
         "apiKey": config.BINANCE_API_KEY,
         "secret": config.BINANCE_SECRET_KEY,
@@ -39,8 +39,8 @@ def fetch_ohlcv(
     limit: int = config.CANDLE_LIMIT,
 ) -> pd.DataFrame:
     """
-    Pobiera świece OHLCV z Binance i zwraca DataFrame.
-    Kolumny: timestamp, open, high, low, close, volume
+    Fetches OHLCV candles from Binance and returns DataFrame.
+    Columns: timestamp, open, high, low, close, volume
     """
     try:
         exchange = get_exchange()
@@ -48,16 +48,16 @@ def fetch_ohlcv(
         df = pd.DataFrame(raw, columns=["timestamp", "open", "high", "low", "close", "volume"])
         df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms", utc=True)
         df = df.set_index("timestamp")
-        logger.info("Pobrano %d świec dla %s (%s)", len(df), pair, timeframe)
+        logger.info("Fetched %d candles for %s (%s)", len(df), pair, timeframe)
         return df
     except Exception as e:
-        logger.error("Błąd pobierania OHLCV: %s", e)
+        logger.error("Error fetching OHLCV: %s", e)
         raise
 
 
 def calculate_indicators(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Oblicza wskaźniki techniczne i zwraca rozszerzony DataFrame.
+    Calculates technical indicators and returns extended DataFrame.
     - SMA 20 / SMA 50
     - RSI (14)
     - MACD (12, 26, 9)
@@ -84,22 +84,22 @@ def calculate_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df["bb_lower"] = bb.bollinger_lband()
     df["bb_mid"] = bb.bollinger_mavg()
 
-    logger.info("Obliczono wskaźniki techniczne (SMA, RSI, MACD, BB)")
+    logger.info("Calculated technical indicators (SMA, RSI, MACD, BB)")
     return df
 
 
 def summarize_market(df: pd.DataFrame) -> str:
     """
-    Tworzy tekstowe podsumowanie rynku z ostatnich danych,
-    gotowe do wysłania jako kontekst do LLM.
+    Creates text summary of market from latest data,
+    ready to send as context to LLM.
     """
     latest = df.iloc[-1]
     prev = df.iloc[-2]
     price_change_pct = ((latest["close"] - prev["close"]) / prev["close"]) * 100
 
     summary = (
-        f"=== ANALIZA TECHNICZNA ({config.TRADING_PAIR}, {config.TIMEFRAME}) ===\n"
-        f"Cena aktualna: {latest['close']:.2f} USD (zmiana: {price_change_pct:+.2f}%)\n"
+        f"=== TECHNICAL ANALYSIS ({config.TRADING_PAIR}, {config.TIMEFRAME}) ===\n"
+        f"Current price: {latest['close']:.2f} USD (change: {price_change_pct:+.2f}%)\n"
         f"Open: {latest['open']:.2f} | High: {latest['high']:.2f} | "
         f"Low: {latest['low']:.2f} | Volume: {latest['volume']:.2f}\n"
         f"SMA(20): {latest['sma_20']:.2f} | SMA(50): {latest['sma_50']:.2f}\n"
@@ -113,7 +113,7 @@ def summarize_market(df: pd.DataFrame) -> str:
 
 
 # ---------------------------------------------------------------------------
-# 2. WIADOMOŚCI / SENTYMENT (News Ingestion)
+# 2. NEWS / SENTIMENT (News Ingestion)
 # ---------------------------------------------------------------------------
 
 def fetch_news(
@@ -121,12 +121,12 @@ def fetch_news(
     count: int = config.NEWS_COUNT,
 ) -> list[dict]:
     """
-    Pobiera najnowsze wiadomości z DuckDuckGo Search.
-    Zwraca listę słowników z kluczami: title, body, url, date.
+    Fetches latest news from DuckDuckGo Search.
+    Returns list of dicts with keys: title, body, url, date.
     """
     if query is None:
-        # Domyślne zapytanie oparte na parze handlowej
-        base_asset = config.TRADING_PAIR.split("/")[0]  # np. "BTC"
+        # Default query based on trading pair
+        base_asset = config.TRADING_PAIR.split("/")[0]  # e.g. "BTC"
         query = f"{base_asset} cryptocurrency news"
 
     try:
@@ -139,19 +139,19 @@ def fetch_news(
                     "url": r.get("url", ""),
                     "date": r.get("date", ""),
                 })
-        logger.info("Pobrano %d newsów dla zapytania: '%s'", len(results), query)
+        logger.info("Fetched %d news for query: '%s'", len(results), query)
         return results
     except Exception as e:
-        logger.warning("Błąd pobierania newsów: %s — kontynuuję bez nich.", e)
+        logger.warning("Error fetching news: %s — continuing without it.", e)
         return []
 
 
 def format_news_for_llm(news: list[dict]) -> str:
-    """Formatuje wiadomości w tekst gotowy do wklejenia do promptu LLM."""
+    """Formats news into text ready to paste into LLM prompt."""
     if not news:
-        return "Brak dostępnych wiadomości.\n"
+        return "No news available.\n"
 
-    lines = ["=== NAJNOWSZE WIADOMOŚCI ==="]
+    lines = ["=== LATEST NEWS ==="]
     for i, item in enumerate(news, 1):
         lines.append(
             f"{i}. [{item['date']}] {item['title']}\n"
@@ -161,13 +161,13 @@ def format_news_for_llm(news: list[dict]) -> str:
 
 
 # ---------------------------------------------------------------------------
-# 3. PORTFEL (Portfolio / Balance)
+# 3. PORTFOLIO (Portfolio / Balance)
 # ---------------------------------------------------------------------------
 
 def fetch_balance(exchange: Optional[ccxt.binance] = None) -> dict:
     """
-    Pobiera stan portfela z giełdy.
-    W trybie paper-trading zwraca symulowany portfel.
+    Fetches portfolio status from exchange.
+    In paper-trading mode returns simulated portfolio.
     """
     if config.IS_PAPER_TRADING:
         return _get_paper_balance()
@@ -184,18 +184,18 @@ def fetch_balance(exchange: Optional[ccxt.binance] = None) -> dict:
             "used_usdt": usdt.get("used", 0.0),
         }
     except Exception as e:
-        logger.error("Błąd pobierania salda: %s", e)
+        logger.error("Error fetching balance: %s", e)
         raise
 
 
 def _get_paper_balance() -> dict:
-    """Zwraca symulowany portfel paper-trading z pliku stanu."""
+    """Returns simulated paper-trading portfolio from state file."""
     import json
     state_file = config.DATA_DIR / "paper_state.json"
     if state_file.exists():
         with open(state_file, "r") as f:
             return json.load(f)
-    # Domyślny stan początkowy
+    # Default initial state
     default = {
         "total_usdt": 100.0,
         "free_usdt": 100.0,
@@ -207,7 +207,7 @@ def _get_paper_balance() -> dict:
 
 
 def _save_paper_state(state: dict) -> None:
-    """Zapisuje stan paper-trading do pliku."""
+    """Saves paper-trading state to file."""
     import json
     state_file = config.DATA_DIR / "paper_state.json"
     with open(state_file, "w") as f:

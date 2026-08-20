@@ -1,0 +1,13 @@
+# AWS Elastic Beanstalk — WORKER tier (agent trading loop)
+# Copy this file to "Procfile" in the worker EB environment before deploying.
+#
+# Worker tier requirements:
+#   - EB Worker environment (not Web tier)
+#   - SQS queue wired to the environment (optional — agent uses time-based loop)
+#   - All env vars below must be set via EB Console or eb setenv
+#
+# Required env vars:
+#   OPENAI_API_KEY, BINANCE_API_KEY (if IS_PAPER_TRADING=false),
+#   BINANCE_SECRET_KEY (if IS_PAPER_TRADING=false),
+#   IS_PAPER_TRADING=true
+worker: python main.py
